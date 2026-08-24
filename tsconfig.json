@@ -18,6 +18,10 @@
     "noEmit": true,
     "jsx": "preserve",
     "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
     "types": [
       "node"
     ],
@@ -34,6 +38,7 @@
     ".next/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    ".test-dist"
   ]
 }
