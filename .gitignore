@@ -16,3 +16,6 @@ prisma/dev.db
 /docs/Healthcare_Appointment_Manager.pdf
 /.pnp
 /.pnp.js
+.neon
+.agents/
+skills-lock.json
