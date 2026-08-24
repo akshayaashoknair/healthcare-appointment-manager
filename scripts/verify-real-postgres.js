@@ -11,19 +11,18 @@ if (fs.existsSync(envPath)) {
       if (idx !== -1) {
         const key = trimmed.slice(0, idx).trim()
         const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '')
-        if (!process.env[key]) {
-          process.env[key] = val
-        }
+        process.env[key] = val
       }
     }
   }
 }
 
 const { PrismaClient } = require('@prisma/client')
-const prisma = new PrismaClient()
+let prisma
 
 async function runRealPostgresVerification() {
   console.log('=== REAL POSTGRESQL & NEON DATABASE VERIFICATION ===\n')
+  prisma = new PrismaClient()
 
   // 1. Verify Connection & Database Info (without printing secrets)
   const dbInfo = await prisma.$queryRaw`
