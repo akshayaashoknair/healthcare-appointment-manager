@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.env
+.env.local
+.env.development
+.env.production
+.DS_Store
+dist/
+coverage/
+prisma/dev.db
+/docs/Healthcare_Appointment_Manager.pdf
+.parcel-cache/
+.vscode/
+.idea/
+/.pnp
+/.pnp.js

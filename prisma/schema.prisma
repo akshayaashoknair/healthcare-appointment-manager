@@ -1,0 +1,359 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum AppointmentStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  LEAVE_AFFECTED
+}
+
+enum HoldStatus {
+  HELD
+  EXPIRED
+  CONSUMED
+  RELEASED
+}
+
+enum ReservationKind {
+  HOLD
+  APPOINTMENT
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+}
+
+enum AIGenerationStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum UrgencyLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  APPOINTMENT_REMINDER
+  CANCELLATION
+  DOCTOR_LEAVE
+  MEDICATION_REMINDER
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  RETRY_SCHEDULED
+  FAILED
+}
+
+enum CalendarSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  DELETE_PENDING
+  DELETED
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  role                UserRole
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  patientProfile      PatientProfile?
+  doctorProfile       DoctorProfile?
+  patientAppointments Appointment[]        @relation("PatientAppointments")
+  doctorAppointments  Appointment[]        @relation("DoctorAppointments")
+  patientHolds        AppointmentHold[]    @relation("PatientHolds")
+  doctorHolds         AppointmentHold[]    @relation("DoctorHolds")
+  patientReservations SlotReservation[]    @relation("PatientReservations")
+  doctorReservations  SlotReservation[]    @relation("DoctorReservations")
+  consultations       Consultation[]       @relation("ConsultationDoctor")
+  symptomSubmissions  SymptomSubmission[]
+  notificationJobs    NotificationJob[]    @relation("NotificationRecipient")
+  calendarConnections CalendarConnection[]
+}
+
+model PatientProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  firstName String
+  lastName  String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model DoctorProfile {
+  id                  String               @id @default(cuid())
+  userId              String               @unique
+  firstName           String
+  lastName            String
+  specialisation      String
+  slotDurationMinutes Int
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workingHours        DoctorWorkingHours[]
+  leaveDays           DoctorLeave[]
+
+  @@index([specialisation, isActive])
+}
+
+model DoctorWorkingHours {
+  id        String        @id @default(cuid())
+  doctorId  String
+  weekday   Int
+  startTime String
+  endTime   String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  doctor    DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, weekday, startTime, endTime])
+  @@index([doctorId, weekday])
+}
+
+model DoctorLeave {
+  id        String        @id @default(cuid())
+  doctorId  String
+  startAt   DateTime      @db.Timestamptz(3)
+  endAt     DateTime      @db.Timestamptz(3)
+  reason    String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  doctor    DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, startAt, endAt])
+}
+
+// This is the single, database-protected source of active slot occupancy.
+// A custom PostgreSQL migration applies the partial exclusion constraint.
+model SlotReservation {
+  id          String            @id @default(cuid())
+  doctorId    String
+  patientId   String
+  startAt     DateTime          @db.Timestamptz(3)
+  endAt       DateTime          @db.Timestamptz(3)
+  kind        ReservationKind
+  status      ReservationStatus @default(ACTIVE)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  doctor      User              @relation("DoctorReservations", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient     User              @relation("PatientReservations", fields: [patientId], references: [id], onDelete: Restrict)
+  hold        AppointmentHold?
+  appointment Appointment?
+
+  @@index([doctorId, startAt])
+  @@index([patientId, startAt])
+  @@index([status, startAt])
+}
+
+model AppointmentHold {
+  id                String             @id @default(cuid())
+  reservationId     String             @unique
+  doctorId          String
+  patientId         String
+  startAt           DateTime           @db.Timestamptz(3)
+  endAt             DateTime           @db.Timestamptz(3)
+  expiresAt         DateTime           @db.Timestamptz(3)
+  status            HoldStatus         @default(HELD)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  reservation       SlotReservation    @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  doctor            User               @relation("DoctorHolds", fields: [doctorId], references: [id], onDelete: Restrict)
+  patient           User               @relation("PatientHolds", fields: [patientId], references: [id], onDelete: Restrict)
+  symptomSubmission SymptomSubmission?
+
+  @@index([doctorId, startAt])
+  @@index([status, expiresAt])
+  @@index([patientId, expiresAt])
+}
+
+model Appointment {
+  id                 String                 @id @default(cuid())
+  reservationId      String                 @unique
+  patientId          String
+  doctorId           String
+  startAt            DateTime               @db.Timestamptz(3)
+  endAt              DateTime               @db.Timestamptz(3)
+  status             AppointmentStatus      @default(CONFIRMED)
+  cancellationReason String?
+  cancelledAt        DateTime?              @db.Timestamptz(3)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  reservation        SlotReservation        @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  patient            User                   @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Restrict)
+  doctor             User                   @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Restrict)
+  symptomSubmission  SymptomSubmission?
+  preVisitSummary    PreVisitSummary?
+  consultation       Consultation?
+  notificationJobs   NotificationJob[]
+  calendarEventMaps  CalendarEventMapping[]
+
+  @@index([doctorId, startAt])
+  @@index([patientId, startAt])
+  @@index([status, startAt])
+}
+
+model SymptomSubmission {
+  id            String           @id @default(cuid())
+  patientId     String
+  appointmentId String?          @unique
+  holdId        String?          @unique
+  symptoms      String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  patient       User             @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  appointment   Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  hold          AppointmentHold? @relation(fields: [holdId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+}
+
+model PreVisitSummary {
+  id                 String             @id @default(cuid())
+  appointmentId      String             @unique
+  urgencyLevel       UrgencyLevel?
+  chiefComplaint     String?
+  suggestedQuestions Json?
+  generationStatus   AIGenerationStatus @default(PENDING)
+  errorMetadata      Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  appointment        Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+}
+
+model Consultation {
+  id               String            @id @default(cuid())
+  appointmentId    String            @unique
+  doctorId         String
+  clinicalNotes    String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  appointment      Appointment       @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  doctor           User              @relation("ConsultationDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+  prescription     Prescription?
+  postVisitSummary PostVisitSummary?
+
+  @@index([doctorId, createdAt])
+}
+
+model Prescription {
+  id                  String            @id @default(cuid())
+  consultationId      String            @unique
+  instructions        String?
+  followUpInformation String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  consultation        Consultation      @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  medications         Medication[]
+  notificationJobs    NotificationJob[]
+}
+
+model Medication {
+  id             String       @id @default(cuid())
+  prescriptionId String
+  name           String
+  dosage         String
+  instructions   String?
+  frequency      String
+  startDate      DateTime?
+  endDate        DateTime?
+  reminderTime   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId])
+}
+
+model PostVisitSummary {
+  id                 String             @id @default(cuid())
+  consultationId     String             @unique
+  patientSummary     String?
+  medicationSchedule String?
+  followUpSteps      String?
+  generationStatus   AIGenerationStatus @default(PENDING)
+  errorMetadata      Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  consultation       Consultation       @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+}
+
+model NotificationJob {
+  id                String             @id @default(cuid())
+  type              NotificationType
+  status            NotificationStatus @default(PENDING)
+  recipientId       String
+  appointmentId     String?
+  prescriptionId    String?
+  payload           Json?
+  attemptCount      Int                @default(0)
+  nextAttemptAt     DateTime?          @db.Timestamptz(3)
+  lastError         String?
+  idempotencyKey    String             @unique
+  providerMessageId String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  recipient         User               @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  appointment       Appointment?       @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  prescription      Prescription?      @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([recipientId, createdAt])
+  @@index([appointmentId])
+  @@index([prescriptionId])
+}
+
+model CalendarConnection {
+  id                    String                 @id @default(cuid())
+  userId                String
+  googleAccountEmail    String
+  encryptedRefreshToken String
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventMappings         CalendarEventMapping[]
+
+  @@unique([userId, googleAccountEmail])
+}
+
+model CalendarEventMapping {
+  id                   String             @id @default(cuid())
+  appointmentId        String
+  calendarConnectionId String
+  googleEventId        String?
+  syncStatus           CalendarSyncStatus @default(PENDING)
+  lastError            String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  appointment          Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  calendarConnection   CalendarConnection @relation(fields: [calendarConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, calendarConnectionId])
+  @@unique([calendarConnectionId, googleEventId])
+  @@index([syncStatus, updatedAt])
+}
